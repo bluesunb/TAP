@@ -122,21 +122,21 @@ class SeqDataset(data.Dataset):
         self.mean = np.concatenate([self.obs_mean[0], self.act_mean[0], [self.rew_mean, self.value_mean]])
         self.std = np.concatenate([self.obs_std[0], self.act_std[0], [self.rew_std, self.value_std]])
 
-    def load_dataset(self):
-        env_name = self.config.env_name
-        dataset_name = self.config.dataset
-        print(f'[ datasets/sequence ] Loading...', end=' ', flush=True)
-        dataset = get_trajectories(env_name, dataset_name,
-                                   terminate_on_end=True, disable_goal=self.config.disable_goal)
-        print(f'[ datasets/sequence ] Done')
-
-        preprocess_fn = dataset_preprocess_functions.get(env_name)
-        if preprocess_fn:
-            print(f'[ datasets/sequence ] Preprocessing...', end=' ', flush=True)
-            dataset = preprocess_fn(dataset)
-            print(f'[ datasets/sequence ] Done')
-
-        return dataset
+    # def load_dataset(self):
+    #     env_name = self.config.env_name
+    #     dataset_name = self.config.dataset
+    #     print(f'[ datasets/sequence ] Loading...', end=' ', flush=True)
+    #     dataset = get_trajectories(env_name, dataset_name,
+    #                                terminate_on_end=True, disable_goal=self.config.disable_goal)
+    #     print(f'[ datasets/sequence ] Done')
+    #
+    #     preprocess_fn = dataset_preprocess_functions.get(env_name)
+    #     if preprocess_fn:
+    #         print(f'[ datasets/sequence ] Preprocessing...', end=' ', flush=True)
+    #         dataset = preprocess_fn(dataset)
+    #         print(f'[ datasets/sequence ] Done')
+    #
+    #     return dataset
 
     def get_pos(self, idx):
         ep_idx = np.searchsorted(self.cum_ep_lens, idx, side='right')

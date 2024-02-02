@@ -9,7 +9,7 @@ import torch.multiprocessing as mp
 
 from latent_planner.train_utils.train_methods import train_prior_model, get_optimizer
 from latent_planner.models.autoencoders import VQContinuousVAE, TransformerPrior, VQContinuousVAEEncWrap
-from latent_planner.datasets.seq import SeqDataset
+from latent_planner.datasets.seq2 import SeqDataset
 from latent_planner.config import (DefaultConfig, TransformerConfig, TrainerConfig,
                                    load_configs, get_recent)
 
@@ -36,7 +36,8 @@ def prepare(env_name, model_name: str, dataset=None):
     print(f'Loaded model from {os.path.join(save_dir, model_name)}')
     model.to(config.device)
     if config.normalize_state:
-        padding_vector = dataset.normalize_joined_single(np.zeros(model_config.transition_dim - 1))
+        padding_vector = np.zeros(model_config.transition_dim - 1)
+        padding_vector = (padding_vector - dataset.mean) / dataset.std
         model.padding_vector = th.from_numpy(padding_vector).to(model.padding_vector)
 
     block_size = config.subsampled_seq_len // config.latent_step
@@ -204,8 +205,8 @@ if __name__ == '__main__':
     args['gpu_ids'] = list(range(args.ngpus_per_node))
     args['num_workers'] = args.ngpus_per_node * 4
 
-    args['env_name'] = "antmaze-large-diverse-v2"
-    args['model_name'] = 'state_0.pt'
+    args['env_name'] = "antmaze-large-play-v2"
+    args['model_name'] = 'state_18.pt'
     args['dataset'] = None
 
     mp.spawn(main, args=(args,), nprocs=args.ngpus_per_node, join=True)

@@ -6,13 +6,14 @@ import torch as th
 
 from latent_planner.config import (DefaultConfig, PlannerConfig,
                                    DatasetConfig, TransformerConfig, TrainerConfig, load_config, get_recent)
-from latent_planner.datasets.seq import SeqDataset
+from latent_planner.datasets.seq2 import SeqDataset
 from latent_planner.datasets.dataset_utils import normalize, denormalize, denormalize_joined
 from latent_planner.datasets.preprocessing import get_preprocess_fn
 from latent_planner.models.autoencoders import VQContinuousVAE, TransformerPrior, VQContinuousVAEEncWrap
-from latent_planner.search import search_utils as utils
+from latent_planner.search import search_utils
 from latent_planner.search import optimizer as plan_opt
 from latent_planner.train_utils.timer import Timer
+from utils.rendering import make_renderer
 
 
 def load_environment(name):
@@ -35,17 +36,18 @@ def prepare(env_name, dataset_name=None, test_planner='sample_prior', task_type=
                                    test_planner=test_planner,
                                    task_type=config.task_type)
 
-    dataset_config = load_config(os.path.join(save_dir, 'data_config.pkl'), DatasetConfig)
-    model_config = load_config(os.path.join(save_dir, 'model_config.pkl'), TransformerConfig)
-    prior_config = load_config(os.path.join(save_dir, 'prior_model_config.pkl'), TransformerConfig)
+    dataset_config: DatasetConfig = load_config(os.path.join(save_dir, 'data_config.pkl'), DatasetConfig)
+    model_config: TransformerConfig = load_config(os.path.join(save_dir, 'model_config.pkl'), TransformerConfig)
+    prior_config: TransformerConfig = load_config(os.path.join(save_dir, 'prior_model_config.pkl'), TransformerConfig)
 
     # ============= Dataset =============
+    dataset_config.termination_penalty = None
     dataset = SeqDataset(dataset_config)
 
     # ============= Model =============
     # model_name = max(list(filter(lambda x: 'state' in x, os.listdir(config.save_dir))),
     #                  key=lambda x: int(x.split('_')[1].split('.')[0]))
-    model_name = 'state_12.pt'
+    model_name = 'state_18.pt'
     model = VQContinuousVAE(model_config)
     state_dict = th.load(os.path.join(save_dir, model_name))
     state_dict = collections.OrderedDict([(k.replace('module.', ''), v) for k, v in state_dict.items()])
@@ -54,7 +56,8 @@ def prepare(env_name, dataset_name=None, test_planner='sample_prior', task_type=
     print(f'Loaded model from {os.path.join(save_dir, model_name)}')
     model.to(config.device)
     if config.normalize_state:
-        padding_vector = dataset.normalize_joined_single(np.zeros(model_config.transition_dim - 1))
+        padding_vector = np.zeros(model_config.transition_dim - 1)
+        padding_vector = (padding_vector - dataset.mean) / dataset.std
         model.padding_vector = th.from_numpy(padding_vector).to(model.padding_vector)
 
     # prior_name = max(list(filter(lambda x: 'prior' in x, os.listdir(config.save_dir))),
@@ -88,6 +91,9 @@ def main(env_name, dataset_name=None, test_planner='sample_prior', task_type='lo
     model_config: TransformerConfig = configs['model']
     prior_config: TransformerConfig = configs['prior']
 
+    save_dir = os.path.join(configs['save_dir'], f'{env_name}.mp4')
+    renderer = make_renderer(env_name)
+
     reward_dim = value_dim = 1
     transition_dim = model_config.transition_dim
     timer = Timer()
@@ -108,11 +114,11 @@ def main(env_name, dataset_name=None, test_planner='sample_prior', task_type='lo
 
     context = []
     losses = []
-    frames = [env.render(mode='rgb_array')]
-    env.viewer.cam.lookat[0] = 18
-    env.viewer.cam.lookat[1] = 12
-    env.viewer.cam.distance = 50
-    env.viewer.cam.elevation = -90
+    # frames = [env.render(mode='rgb_array')]
+    # env.viewer.cam.lookat[0] = 18
+    # env.viewer.cam.lookat[1] = 12
+    # env.viewer.cam.distance = 50
+    # env.viewer.cam.elevation = -90
 
     model.eval()
     for t in range(env.max_episode_steps):
@@ -127,7 +133,7 @@ def main(env_name, dataset_name=None, test_planner='sample_prior', task_type='lo
             state = np.concatenate([state, np.zeros(2) if dataset_config.disable_goal else env.target_goal])
 
         if t % planner_config.plan_freq == 0:
-            prefix = utils.make_prefix(obs, transition_dim, device=config.device)
+            prefix = search_utils.make_prefix(obs, transition_dim, device=config.device)
             prefix = prefix[-1, -1, None, None]
 
             if planner_config.test_planner == "beam_with_prior":
@@ -177,11 +183,11 @@ def main(env_name, dataset_name=None, test_planner='sample_prior', task_type='lo
             first_value = float(denormalize(sequence[0, -2], dataset.value_mean, dataset.value_std))
             first_search_value = float(denormalize(sequence[-1, -2], dataset.value_mean, dataset.value_std))
 
-        print(f"Step {t}: {sequence.shape[0]} plans")
-        print(denormalize(sequence[0, -2], dataset.value_mean, dataset.value_std))
+        # print(f"Step {t}: {sequence.shape[0]} plans")
+        # print(denormalize(sequence[0, -2], dataset.value_mean, dataset.value_std))
 
         sequence_recon = sequence
-        action = utils.extract_actions(sequence_recon, model_config.observation_dim, model_config.action_dim, t=0)
+        action = search_utils.extract_actions(sequence_recon, model_config.observation_dim, model_config.action_dim, t=0)
         if dataset_config.normalize_sa:
             action = denormalize(action, dataset.act_mean, dataset.act_std)
             sequence_recon = denormalize_joined(sequence_recon, dataset.mean, dataset.std)
@@ -196,29 +202,48 @@ def main(env_name, dataset_name=None, test_planner='sample_prior', task_type='lo
         score = env.get_normalized_score(total_reward)
 
         rollout.append(state.copy())
-        context = utils.update_context(obs, action, reward, config.device)
+        context = search_utils.update_context(obs, action, reward, config.device)
 
-        print(
-            f'[ plan ] t: {t} / {env.max_episode_steps} | r: {reward:.2f} | R: {total_reward:.2f} | score: {score:.4f} | '
-            f'time: {timer():.4f} | {config.dataset} | {config.exp_name} | {config.suffix}\n'
-        )
+        if t % 10 == 0:
+            print(
+                f'[ plan ] t: {t} / {env.max_episode_steps} | r: {reward:.2f} | R: {total_reward:.2f} | score: {score:.4f} | '
+                f'time: {timer():.4f} | {config.dataset} | {config.exp_name} | {config.suffix}\n'
+            )
 
-        frames.append(env.render(mode='rgb_array'))
+        if t % planner_config.vis_freq == 0 or term or t == env.max_episode_steps - 1:
+
+            # ffmpeg will report a error in some setup
+            if "antmaze" in env.name or "medium" in env.name:
+                _, mse = renderer.render_plan(os.path.join(configs['save_dir'], f'{t}_plan.mp4'),
+                                              sequence_recon, state)
+            else:
+                _, mse = renderer.render_real(os.path.join(configs['save_dir'], f'{t}_plan.mp4'),
+                                              sequence_recon, state)
+
+            ## save rollout thus far
+            renderer.render_rollout(os.path.join(configs['save_dir'], f'rollout.mp4'), rollout, fps=60)
+            if not term:
+                losses.append(mse)
+
+        # frames.append(env.render(mode='rgb_array'))
         if term:
             break
 
         obs = next_obs
 
-    import imageio
-    imageio.mimsave(os.path.join(configs['save_dir'], f'{env_name}.mp4'), frames, fps=30)
+    # import imageio
+    # imageio.mimsave(os.path.join(configs['save_dir'], f'{env_name}.mp4'), frames, fps=30)
 
     print(f"score: {score:.4f} | total_reward: {total_reward:.4f} | discount_reward: {discount_reward:.4f}")
     print(f"first_value: {first_value:.4f} | first_search_value: {first_search_value:.4f}")
+    print(f"losses: {np.mean(losses)}")
 
 
 if __name__ == '__main__':
-    env_name = "antmaze-large-diverse-v2"
+    env_name = "antmaze-large-play-v2"
     dataset_name = None
     task_type = "locomotion"
     test_planner = "beam_with_prior"
+    import d4rl
+    env = d4rl.locomotion.ant.AntMazeEnv
     main(env_name, dataset_name, test_planner, task_type)

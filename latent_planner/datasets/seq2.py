@@ -53,7 +53,7 @@ class SeqDataset(data.Dataset):
             self.values = normalize(self.values, self.value_mean, self.value_std)
             self.rewards = normalize(self.rewards, self.rew_mean, self.rew_std)
 
-        self.term_mask = np.pad(after_term, ((0, 0), (0, config.seq_len - 1)), constant_values=1)
+        self.ep_term_mask = np.pad(after_term, ((0, 0), (0, config.seq_len - 1)), constant_values=1)
         self.episodes = np.concatenate(
             [self.observations, self.actions, self.rewards, self.values[..., None]], axis=-1)
         self.episodes = np.pad(self.episodes, ((0, 0), (0, config.seq_len - 1), (0, 0)))
@@ -63,12 +63,12 @@ class SeqDataset(data.Dataset):
         self.std = np.concatenate([self.obs_std, self.act_std, [self.rew_std, self.value_std]])
 
     def __len__(self):
-        return self.cum_ep_lens[-1]
+        return int(self.cum_ep_lens[-1])
 
     def __getitem__(self, idx):
         ep_idx, delta = self.get_pos(idx)
         mask = (np.arange(self.seq_len) + delta) < (self.config.max_path_length - self.step)
-        term_mask = self.term_mask[ep_idx, delta:delta + self.seq_len:self.step, None]
+        term_mask = self.ep_term_mask[ep_idx, delta:delta + self.seq_len:self.step, None]
 
         episode = self.episodes[ep_idx, delta:delta + self.seq_len:self.step]
         current = episode[:-1]
@@ -76,7 +76,7 @@ class SeqDataset(data.Dataset):
         mask = np.repeat(mask.reshape(-1, 1), current.shape[1], axis=1)[:-1]
         term_mask = term_mask.reshape(-1, 1)[:-1]
 
-        return current, next_, mask, term_mask
+        return current, next_, mask.astype(np.float32), term_mask.astype(np.float32)
 
     def get_pos(self, idx):
         ep_idx = np.searchsorted(self.cum_ep_lens, idx, side='right')
@@ -96,8 +96,8 @@ class SeqDataset(data.Dataset):
         assert np.all(ep_lens <= self.config.max_path_length), \
             f"max_path_length({self.config.max_path_length} < max ep length ({ep_lens.max()})"
 
-        episodes_arr = np.zeros((len(ep_ids), self.config.max_path_length, data.shape[-1]))
-        after_terminals = np.zeros((len(ep_ids), self.config.max_path_length))
+        episodes_arr = np.zeros((len(ep_ids), self.config.max_path_length, data.shape[-1]), dtype=np.float32)
+        after_terminals = np.zeros((len(ep_ids), self.config.max_path_length), dtype=np.float32)
         for i in range(len(ep_ids)):
             ep_len = ep_lens[i]
             episodes_arr[i, :ep_len] = episodes[ep_ids[i]]

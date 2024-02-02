@@ -279,8 +279,8 @@ def beam_with_prior(model: VQContinuousVAE,
         joint_log_probs = joint_log_probs[topk_idx]
 
     optimal_traj = pred[topk_idx[0], ...]
-    print(f"[beam/prior] predicted max value: {topk_values[0]:.5f} | likelihood: {joint_log_probs[0]:4f} |"
-          f"ood-obj: {likelihood_bonus[topk_idx[0]]:.5f}")
+    # print(f"[beam/prior] predicted max value: {topk_values[0]:.5f} | likelihood: {joint_log_probs[0]:4f} |"
+    #       f"ood-obj: {likelihood_bonus[topk_idx[0]]:.5f}")
 
     if return_info:
         return optimal_traj.cpu().numpy(), info

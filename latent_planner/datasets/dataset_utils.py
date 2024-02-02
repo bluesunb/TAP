@@ -99,14 +99,14 @@ def to_array(x, vec: Union[np.ndarray, th.Tensor]):
 
 
 def normalize(x, mean, std):
-    mean = to_array(x, mean)
-    std = to_array(x, std)
+    mean = to_array(mean, x)
+    std = to_array(std, x)
     return (x - mean) / std
 
 
 def denormalize(x, mean, std):
-    mean = to_array(x, mean)
-    std = to_array(x, std)
+    mean = to_array(mean, x)
+    std = to_array(std, x)
     return x * std + mean
 
 

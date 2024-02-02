@@ -9,7 +9,7 @@ import torch.multiprocessing as mp
 
 # import latent_planner.utils as utils
 from latent_planner.train_utils.train_methods import train_repr_model, get_optimizer
-from latent_planner.datasets.seq import SeqDataset
+from latent_planner.datasets.seq2 import SeqDataset
 from latent_planner.datasets.d4rl_utils import load_environment
 from latent_planner.models.autoencoders import VQContinuousVAE
 from latent_planner.config import (DefaultConfig, DatasetConfig, TransformerConfig, TrainerConfig,
@@ -36,9 +36,10 @@ def prepare(env_name, dataset=None, pretrained=False):
     if not os.path.exists(config.save_dir):
         os.makedirs(config.save_dir, exist_ok=True)
 
-    save_dir = get_recent(config.save_dir)
+    save_dir = None
 
     if pretrained:
+        save_dir = get_recent(config.save_dir)
         dataset_config = load_config(os.path.join(save_dir, 'data_config.pkl'), DatasetConfig)
     else:
         dataset_config = DatasetConfig(
@@ -123,7 +124,8 @@ def prepare(env_name, dataset=None, pretrained=False):
 
     model.to(config.device)
     if config.normalize_state:
-        padding_vector = dataset.normalize_joined_single(np.zeros(model_config.transition_dim - 1))
+        padding_vector = np.zeros(model_config.transition_dim - 1)
+        padding_vector = (padding_vector - dataset.mean) / dataset.std
         model.padding_vector = th.from_numpy(padding_vector).to(model.padding_vector)
 
     # ============= Training =============
@@ -235,8 +237,8 @@ def setup_for_distributed(is_master):
 #         th.save(state, state_path)
 
 def main(rank, args):
-    # init_distributed_mode(rank, args)
-    # local_gpu_id = args.gpu
+    init_distributed_mode(rank, args)
+    local_gpu_id = args.gpu
 
     dataset, model, configs = prepare(env_name=args['env_name'],
                                       dataset=args['dataset'],
@@ -302,9 +304,9 @@ if __name__ == '__main__':
     args['num_workers'] = args.ngpus_per_node * 4
 
     # config.env_name = "maze2d-medium-v1"
-    args['env_name'] = 'antmaze-large-diverse-v2'
+    args['env_name'] = 'antmaze-large-play-v2'
     args['dataset'] = None
-    args['pretrained'] = True
+    args['pretrained'] = False
 
-    # mp.spawn(main, args=(args,), nprocs=args.ngpus_per_node, join=True)
-    main(None, args)
+    mp.spawn(main, args=(args,), nprocs=args.ngpus_per_node, join=True)
+    # main(None, args)

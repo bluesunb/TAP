@@ -100,7 +100,7 @@ class DefaultConfig:
 
     normalize_state = True
     normalize_reward = True
-    max_path_length = 1000
+    max_path_length = 1001
     bottleneck = "pooling"
     masking = "uniform"
     disable_goal = False

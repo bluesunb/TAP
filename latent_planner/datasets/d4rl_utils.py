@@ -99,7 +99,7 @@ def qlearning_dataset_with_timeouts(env, dataset=None, terminate_on_end=True, di
         if (not terminate_on_end) and final_timestep:
             # Skip this transition and don't apply terminals on the last step of an episode
             episode_step = 0
-            continue  
+            continue
         if done_bool or final_timestep:
             episode_step = 0
 
@@ -134,39 +134,42 @@ def get_trajectories(env_name: str,
     else:
         with suppress_output():
             import d4rl
-        env = load_environment(env_name) if isinstance(env_name, str) else env_name
+        env: d4rl.offline_env.OfflineEnv = load_environment(env_name) if isinstance(env_name, str) else env_name
         dataset = env.get_dataset()
 
     length = dataset['observations'].shape[0]
     if "infos/goal" in dataset:
         goal = np.zeros(length, 2, dtype=np.float32) if disable_goal else dataset['infos/goal']
         dataset["observations"] = np.concatenate([dataset["observations"], goal], axis=1)
-        is_final = np.any(dataset['infos/goal'][:-1] != dataset['infos/goal'][1:], axis=1)
+        env_reset = np.any(dataset['infos/goal'][:-1] != dataset['infos/goal'][1:], axis=1)
     else:
-        is_final = dataset['timeouts'][:-1]
+        env_reset = dataset['timeouts'][:-1]
 
     observations = dataset['observations'][:-1]
     next_observations = dataset['observations'][1:]
     actions = dataset['actions'][:-1]
     rewards = dataset['rewards'][:-1]
-    terminals = np.logical_or(dataset['terminals'][:-1], is_final)
-    terminals_float = dataset['terminals'][:-1]
+    dones = dataset['terminals'][:-1]
+    truncated = env_reset
+    # terminals = np.logical_or(dataset['terminals'][:-1], env_reset)
+    # timeouts = dataset['terminals'][:-1]
+    # timeouts = dataset['timeouts'][:-1]
 
     if not terminate_on_end:
-        observations = observations[~is_final]
-        next_observations = next_observations[~is_final]
-        actions = actions[~is_final]
-        rewards = rewards[~is_final]
-        terminals = terminals[~is_final]
-        terminals_float = terminals_float[~is_final]
+        observations = observations[~env_reset]
+        next_observations = next_observations[~env_reset]
+        actions = actions[~env_reset]
+        rewards = rewards[~env_reset]
+        dones = dones[~env_reset]
+        truncated = truncated[~env_reset]
 
     return {
         'observations': observations,
         'actions': actions,
         'next_observations': next_observations,
         'rewards': rewards[:, None],
-        'terminals': terminals[:, None],
-        'terminals_float': terminals_float[:, None],
+        'terminals': dones[:, None],
+        'truncated': truncated[:, None],
     }
 
 
@@ -253,7 +256,6 @@ def get_dataset(env_name: str,
                 obs_dtype=np.float32,):
 
     if dataset is None:
-        import d4rl
         # dataset = d4rl.qlearning_dataset(env)
         # dataset = qlearning_dataset_with_timeouts(env)
         dataset = get_trajectories(env_name, dataset=dataset, terminate_on_end=True, disable_goal=disable_goal)
@@ -276,17 +278,19 @@ def get_dataset(env_name: str,
         dataset = new_dataset
 
     if 'antmaze' in env_name:
-        # antmaze: terminals are incorrect for GCRL
-        dones_float = np.zeros_like(dataset['terminals']).squeeze()
-        dataset['terminals'][:] = 0.
-
-        norms = np.linalg.norm(dataset['observations'][1:] - dataset['next_observations'][:-1], axis=-1)
-        norms = (norms > 1e-6).astype(np.float32)
-        dones_float[:-1] = norms
-        dones_float[-1] = 1
-        dones_float = dones_float.reshape(*dataset['terminals'].shape)
-    else:
-        dones_float = dataset['terminals'].copy()
+        dataset['rewards'] = dataset['rewards'] - 1
+    #     # antmaze: terminals are incorrect for GCRL
+    #     dones_float = np.zeros_like(dataset['terminals']).squeeze()
+    #     dataset['terminals'][:] = 0.
+    #
+    #     norms = np.linalg.norm(dataset['observations'][1:] - dataset['next_observations'][:-1], axis=-1)
+    #     norms = (norms > 1e-6).astype(np.float32)
+    #     dones_float[:-1] = norms
+    #     dones_float[-1] = 1
+    #     dones_float = dones_float.reshape(*dataset['terminals'].shape)
+    # else:
+    #     dones_float = dataset['terminals'].copy()
+    dones_float = dataset['terminals'].copy()
 
     observations = dataset['observations'].astype(obs_dtype)
     next_observations = dataset['next_observations'].astype(obs_dtype)
@@ -295,8 +299,9 @@ def get_dataset(env_name: str,
             'actions': dataset['actions'].astype(np.float32),
             'rewards': dataset['rewards'].astype(np.float32),
             'masks': 1.0 - dones_float.astype(np.float32),
-            'terminals': dones_float.astype(int),
-            'next_observations': next_observations}
+            'terminals': dones_float.astype(bool),
+            'truncated': dataset['truncated'].astype(bool),
+            'next_observations': next_observations.astype(np.float32)}
 
 
 class EpisodeMonitor(gym.ActionWrapper):
